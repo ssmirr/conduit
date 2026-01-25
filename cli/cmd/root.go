@@ -29,7 +29,13 @@ import (
 var (
 	verbosity int
 	dataDir   string
+
+	// Build metadata - set via ldflags during build
 	version   = "dev"
+	buildDate = "unknown"
+	buildRepo = "unknown"
+	buildRev  = "unknown"
+	goVersion = "unknown"
 )
 
 var rootCmd = &cobra.Command{

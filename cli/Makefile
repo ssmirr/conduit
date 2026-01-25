@@ -1,7 +1,18 @@
 .PHONY: setup build build-embedded build-all build-all-embedded clean test fmt lint deps check-go
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -ldflags "-X github.com/Psiphon-Inc/conduit/cli/cmd.version=$(VERSION)"
+
+# Build metadata for tracking psiphon-tunnel-core build info
+BUILD_DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')
+BUILD_REPO := $(shell cd psiphon-tunnel-core 2>/dev/null && git config --get remote.origin.url || echo "unknown")
+BUILD_REV := $(shell cd psiphon-tunnel-core 2>/dev/null && git rev-parse --short HEAD || echo "unknown")
+GO_VERSION := $(shell go version 2>/dev/null || echo "unknown")
+
+LDFLAGS := -ldflags "-X 'github.com/Psiphon-Inc/conduit/cli/cmd.version=$(VERSION)' \
+	-X 'github.com/Psiphon-Inc/conduit/cli/cmd.buildDate=$(BUILD_DATE)' \
+	-X 'github.com/Psiphon-Inc/conduit/cli/cmd.buildRepo=$(BUILD_REPO)' \
+	-X 'github.com/Psiphon-Inc/conduit/cli/cmd.buildRev=$(BUILD_REV)' \
+	-X 'github.com/Psiphon-Inc/conduit/cli/cmd.goVersion=$(GO_VERSION)'"
 
 # Build tags required for inproxy functionality
 BUILD_TAGS := -tags "PSIPHON_ENABLE_INPROXY"
