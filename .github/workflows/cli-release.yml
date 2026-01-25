@@ -150,8 +150,8 @@ jobs:
 
             | Option | Default | Description |
             |--------|---------|-------------|
-            | `--max-clients, -m` | 200 | Maximum concurrent clients (1-1000) |
-            | `--bandwidth, -b` | 5 | Bandwidth limit in Mbps (1-40) |
+            | `--max-clients, -m` | 50 | Maximum concurrent clients (1-1000) |
+            | `--bandwidth, -b` | 40 | Total bandwidth limit in Mbps (-1 for unlimited) |
             | `--data-dir, -d` | ./data | Directory for keys and state |
             | `-v` | - | Verbose output (`-vv` for debug) |
 
