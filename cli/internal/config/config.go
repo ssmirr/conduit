@@ -131,6 +131,15 @@ func LoadOrCreate(opts Options) (*Config, error) {
 	}, nil
 }
 
+// GetKeyShortHash returns a short hash of the public key for directory naming
+func (c *Config) GetKeyShortHash() string {
+	if c.KeyPair == nil || len(c.KeyPair.PublicKey) < 4 {
+		return ""
+	}
+	// Use first 4 bytes of public key as hex
+	return fmt.Sprintf("%x", c.KeyPair.PublicKey[:4])
+}
+
 // loadOrCreateKey loads an existing key from disk or generates a new one
 func loadOrCreateKey(dataDir string, verbose bool) (*crypto.KeyPair, string, error) {
 	keyPath := filepath.Join(dataDir, keyFileName)

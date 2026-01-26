@@ -37,7 +37,10 @@ var (
 	bandwidthMbps     float64
 	psiphonConfigPath string
 	statsFilePath     string
+	multiInstance     bool
 )
+
+const clientsPerInstance = 100
 
 var startCmd = &cobra.Command{
 	Use:   "start",
@@ -48,12 +51,18 @@ var startCmd = &cobra.Command{
 
 func getStartLongHelp() string {
 	if config.HasEmbeddedConfig() {
-		return `Start the Conduit inproxy service to relay traffic for users in censored regions.`
+		return `Start the Conduit inproxy service to relay traffic for users in censored regions.
+
+Use --multi-instance to automatically run multiple instances based on max-clients
+(1 instance per 100 clients). Each instance gets its own key and reputation.`
 	}
 	return `Start the Conduit inproxy service to relay traffic for users in censored regions.
 
 Requires a Psiphon network configuration file (JSON) containing the
-PropagationChannelId, SponsorId, and broker specifications.`
+PropagationChannelId, SponsorId, and broker specifications.
+
+Use --multi-instance to automatically run multiple instances based on max-clients
+(1 instance per 100 clients). Each instance gets its own key and reputation.`
 }
 
 func init() {
@@ -63,6 +72,7 @@ func init() {
 	startCmd.Flags().Float64VarP(&bandwidthMbps, "bandwidth", "b", config.DefaultBandwidthMbps, "total bandwidth limit in Mbps (-1 for unlimited)")
 	startCmd.Flags().StringVarP(&statsFilePath, "stats-file", "s", "", "persist stats to JSON file (default: stats.json in data dir if flag used without value)")
 	startCmd.Flags().Lookup("stats-file").NoOptDefVal = "stats.json"
+	startCmd.Flags().BoolVar(&multiInstance, "multi-instance", false, "run multiple instances (1 per 100 max-clients)")
 
 	// Only show --psiphon-config flag if no config is embedded
 	if !config.HasEmbeddedConfig() {
@@ -88,6 +98,29 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("psiphon config required: use --psiphon-config flag or build with embedded config")
 	}
 
+	// Setup context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle shutdown signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		fmt.Println("\nShutting down...")
+		cancel()
+	}()
+
+	// Run in multi-instance or single-instance mode
+	if multiInstance {
+		return runMultiInstance(ctx, effectiveConfigPath, useEmbedded)
+	}
+	return runSingleInstance(ctx, effectiveConfigPath, useEmbedded)
+}
+
+// runSingleInstance runs the original single-instance mode
+func runSingleInstance(ctx context.Context, configPath string, useEmbedded bool) error {
 	// Resolve stats file path - if relative, place in data dir
 	resolvedStatsFile := statsFilePath
 	if resolvedStatsFile != "" && !filepath.IsAbs(resolvedStatsFile) {
@@ -97,7 +130,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Load or create configuration (auto-generates keys on first run)
 	cfg, err := config.LoadOrCreate(config.Options{
 		DataDir:           GetDataDir(),
-		PsiphonConfigPath: effectiveConfigPath,
+		PsiphonConfigPath: configPath,
 		UseEmbeddedConfig: useEmbedded,
 		MaxClients:        maxClients,
 		BandwidthMbps:     bandwidthMbps,
@@ -114,20 +147,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create conduit service: %w", err)
 	}
 
-	// Setup context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle shutdown signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigChan
-		fmt.Println("\nShutting down...")
-		cancel()
-	}()
-
 	// Print startup message
 	bandwidthStr := "unlimited"
 	if bandwidthMbps != config.UnlimitedBandwidth {
@@ -141,5 +160,90 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Stopped.")
+	return nil
+}
+
+// runMultiInstance runs multiple instances based on max-clients (1 per 100)
+func runMultiInstance(ctx context.Context, configPath string, useEmbedded bool) error {
+	// Calculate number of instances: ceil(maxClients / 100)
+	instanceCount := (maxClients + clientsPerInstance - 1) / clientsPerInstance
+	if instanceCount < 1 {
+		instanceCount = 1
+	}
+	if instanceCount > 32 {
+		instanceCount = 32
+	}
+
+	// Calculate clients per instance
+	clientsPerInst := maxClients / instanceCount
+	if clientsPerInst < 1 {
+		clientsPerInst = 1
+	}
+
+	baseDataDir := GetDataDir()
+
+	// Create instance configurations
+	var instanceConfigs []*config.Config
+	for i := 0; i < instanceCount; i++ {
+		// Create config first to get the key, then use key hash for directory name
+		tempDataDir := filepath.Join(baseDataDir, fmt.Sprintf("instance-%d", i))
+
+		// Resolve stats file path for this instance
+		var statsFile string
+		if statsFilePath != "" {
+			ext := filepath.Ext(statsFilePath)
+			base := statsFilePath[:len(statsFilePath)-len(ext)]
+			statsFile = filepath.Join(baseDataDir, fmt.Sprintf("%s-instance-%d%s", base, i, ext))
+		}
+
+		cfg, err := config.LoadOrCreate(config.Options{
+			DataDir:           tempDataDir,
+			PsiphonConfigPath: configPath,
+			UseEmbeddedConfig: useEmbedded,
+			MaxClients:        clientsPerInst,
+			BandwidthMbps:     bandwidthMbps,
+			Verbosity:         Verbosity(),
+			StatsFile:         statsFile,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create config for instance %d: %w", i, err)
+		}
+
+		// Rename directory to use key short hash
+		keyHash := cfg.GetKeyShortHash()
+		if keyHash != "" {
+			newDataDir := filepath.Join(baseDataDir, keyHash)
+			if tempDataDir != newDataDir {
+				// Move if different and new doesn't exist
+				if _, err := os.Stat(newDataDir); os.IsNotExist(err) {
+					os.Rename(tempDataDir, newDataDir)
+					cfg.DataDir = newDataDir
+				}
+			}
+		}
+
+		instanceConfigs = append(instanceConfigs, cfg)
+	}
+
+	// Create multi-instance service
+	multiService, err := conduit.NewMultiService(instanceConfigs)
+	if err != nil {
+		return fmt.Errorf("failed to create multi-instance service: %w", err)
+	}
+
+	// Print startup message
+	bandwidthStr := "unlimited"
+	if bandwidthMbps != config.UnlimitedBandwidth {
+		bandwidthStr = fmt.Sprintf("%.0f Mbps", bandwidthMbps)
+	}
+	fmt.Printf("Starting %d Psiphon Conduit instances (Max Clients/instance: %d, Bandwidth: %s)\n",
+		instanceCount, clientsPerInst, bandwidthStr)
+
+	// Run the multi-instance service
+	if err := multiService.Run(ctx); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("multi-instance service error: %w", err)
+	}
+
+	fmt.Println("All instances stopped.")
 	return nil
 }

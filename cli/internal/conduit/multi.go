@@ -37,6 +37,7 @@ type MultiService struct {
 // Instance represents a single running inproxy instance
 type Instance struct {
 	ID      int
+	KeyHash string // Short hash of public key for identification
 	Config  *config.Config
 	Service *Service
 	Stats   Stats
@@ -54,8 +55,16 @@ func NewMultiService(configs []*config.Config) (*MultiService, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create service for instance %d: %w", i, err)
 		}
+
+		// Get key hash for this instance
+		keyHash := cfg.GetKeyShortHash()
+		if keyHash == "" {
+			keyHash = fmt.Sprintf("%d", i)
+		}
+
 		instances[i] = &Instance{
 			ID:      i,
+			KeyHash: keyHash,
 			Config:  cfg,
 			Service: service,
 		}
@@ -77,7 +86,7 @@ func (m *MultiService) Run(ctx context.Context) error {
 		go func(instance *Instance) {
 			defer wg.Done()
 			if err := m.runInstance(ctx, instance); err != nil {
-				errChan <- fmt.Errorf("instance %d error: %w", instance.ID, err)
+				errChan <- fmt.Errorf("[%s] error: %w", instance.KeyHash, err)
 			}
 		}(inst)
 	}
@@ -105,10 +114,10 @@ func (m *MultiService) Run(ctx context.Context) error {
 	return firstErr
 }
 
-// runInstance runs a single instance with prefixed logging
+// runInstance runs a single instance with key-hash prefixed logging
 func (m *MultiService) runInstance(ctx context.Context, instance *Instance) error {
-	// Log instance startup
-	fmt.Printf("[instance-%d] Starting with data dir: %s\n", instance.ID, instance.Config.DataDir)
+	// Log instance startup with key hash prefix
+	fmt.Printf("[%s] Starting with data dir: %s\n", instance.KeyHash, instance.Config.DataDir)
 
 	// Create instance-specific context
 	instanceCtx, cancel := context.WithCancel(ctx)
@@ -122,7 +131,7 @@ func (m *MultiService) runInstance(ctx context.Context, instance *Instance) erro
 	instance.Stats = instance.Service.GetStats()
 	m.mu.Unlock()
 
-	fmt.Printf("[instance-%d] Stopped\n", instance.ID)
+	fmt.Printf("[%s] Stopped\n", instance.KeyHash)
 	return err
 }
 
