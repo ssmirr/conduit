@@ -348,8 +348,8 @@ func (m *MultiService) aggregateAndPrintStats(ctx context.Context) {
 
 // printAndWriteStats aggregates, prints, and optionally writes stats to file
 func (m *MultiService) printAndWriteStats() {
+	// Copy data under lock, then release before I/O
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	var liveCount, totalConnecting, totalConnected int
 	var totalUp, totalDown int64
@@ -375,7 +375,13 @@ func (m *MultiService) printAndWriteStats() {
 	}
 
 	uptime := time.Since(m.startTime).Truncate(time.Second)
+	statsFile := m.config.StatsFile
+	verbosity := m.config.Verbosity
 
+	m.mu.Unlock()
+	// Lock released - safe to do I/O operations now
+
+	// Print aggregate stats to console
 	fmt.Printf("%s [AGGREGATE] Live: %d/%d | Connecting: %d | Connected: %d | Up: %s | Down: %s | Uptime: %s\n",
 		time.Now().Format("2006-01-02 15:04:05"),
 		liveCount,
@@ -387,7 +393,8 @@ func (m *MultiService) printAndWriteStats() {
 		formatDuration(uptime),
 	)
 
-	if m.config.StatsFile != "" {
+	// Write stats to file if configured
+	if statsFile != "" {
 		statsJSON := AggregateStatsJSON{
 			LiveInstances:     liveCount,
 			TotalInstances:    m.numInstances,
@@ -406,10 +413,10 @@ func (m *MultiService) printAndWriteStats() {
 			return
 		}
 
-		if err := os.WriteFile(m.config.StatsFile, data, 0644); err != nil {
-			fmt.Printf("[ERROR] Failed to write stats file %s: %v\n", m.config.StatsFile, err)
-		} else if m.config.Verbosity >= 2 {
-			fmt.Printf("[DEBUG] Wrote stats to %s\n", m.config.StatsFile)
+		if err := os.WriteFile(statsFile, data, 0644); err != nil {
+			fmt.Printf("[ERROR] Failed to write stats file %s: %v\n", statsFile, err)
+		} else if verbosity >= 2 {
+			fmt.Printf("[DEBUG] Wrote stats to %s\n", statsFile)
 		}
 	}
 }
