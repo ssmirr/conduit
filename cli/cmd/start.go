@@ -37,6 +37,8 @@ var (
 	bandwidthMbps     float64
 	psiphonConfigPath string
 	statsFilePath     string
+	multiInstance     bool
+	numInstances      int
 )
 
 var startCmd = &cobra.Command{
@@ -61,8 +63,10 @@ func init() {
 
 	startCmd.Flags().IntVarP(&maxClients, "max-clients", "m", config.DefaultMaxClients, "maximum number of proxy clients (1-1000)")
 	startCmd.Flags().Float64VarP(&bandwidthMbps, "bandwidth", "b", config.DefaultBandwidthMbps, "total bandwidth limit in Mbps (-1 for unlimited)")
-	startCmd.Flags().StringVarP(&statsFilePath, "stats-file", "s", "", "persist stats to JSON file (default: stats.json in data dir if flag used without value)")
+	startCmd.Flags().StringVarP(&statsFilePath, "stats-file", "s", "", "persist stats to JSON file (-s for default, -s=path or --stats-file=path for custom)")
 	startCmd.Flags().Lookup("stats-file").NoOptDefVal = "stats.json"
+	startCmd.Flags().BoolVar(&multiInstance, "multi-instance", false, "run multiple instances (1 per 100 max-clients)")
+	startCmd.Flags().IntVar(&numInstances, "instances", 0, "number of instances (0 = auto-calculate based on max-clients)")
 
 	// Only show --psiphon-config flag if no config is embedded
 	if !config.HasEmbeddedConfig() {
@@ -108,12 +112,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Create conduit service
-	service, err := conduit.New(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create conduit service: %w", err)
-	}
-
 	// Setup context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -127,6 +125,30 @@ func runStart(cmd *cobra.Command, args []string) error {
 		fmt.Println("\nShutting down...")
 		cancel()
 	}()
+
+	// Multi-instance mode: spawn subprocesses
+	if multiInstance || numInstances > 0 {
+		instances := numInstances
+		if instances <= 0 {
+			instances = conduit.CalculateInstances(maxClients)
+		}
+		multiService, err := conduit.NewMultiService(cfg, instances)
+		if err != nil {
+			return fmt.Errorf("failed to create multi-instance service: %w", err)
+		}
+
+		if err := multiService.Run(ctx); err != nil && ctx.Err() == nil {
+			return fmt.Errorf("multi-instance service error: %w", err)
+		}
+
+		return nil
+	}
+
+	// Single instance mode (default)
+	service, err := conduit.New(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create conduit service: %w", err)
+	}
 
 	// Print startup message
 	bandwidthStr := "unlimited"
