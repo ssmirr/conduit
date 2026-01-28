@@ -148,10 +148,7 @@ func NewMultiService(cfg *config.Config, numInstances int) (*MultiService, error
 func (m *MultiService) Run(ctx context.Context) error {
 	ctx, m.cancel = context.WithCancel(ctx)
 
-	clientsPerInstance := m.config.MaxClients / m.numInstances
-	if clientsPerInstance < 1 {
-		clientsPerInstance = 1
-	}
+	clientsPerInstance := max(m.config.MaxClients/m.numInstances, 1)
 
 	var bandwidthPerInstance float64
 	if m.config.BandwidthBytesPerSecond > 0 {
@@ -311,6 +308,9 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 		for scanner.Scan() {
 			fmt.Fprintf(os.Stderr, "[instance-%d] %s\n", idx, scanner.Text())
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "[instance-%d] %v\n", idx, err)
+		}
 	}()
 
 	// Stream stdout and parse for stats
@@ -322,6 +322,9 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 			line := scanner.Text()
 			m.parseInstanceOutput(idx, line)
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "[instance-%d] %v\n", idx, err)
+		}
 	}()
 
 	// Wait for process to exit
@@ -330,35 +333,46 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 
 // parseInstanceOutput processes output from a subprocess instance
 func (m *MultiService) parseInstanceOutput(idx int, line string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	var changed bool
 
+	m.mu.Lock()
 	stats := m.instanceStats[idx]
 
 	// Always show "Connected to Psiphon network" events (important milestone)
 	if strings.Contains(line, "[OK] Connected to Psiphon network") {
 		stats.IsLive = true
 		fmt.Printf("[instance-%d] Connected to Psiphon network\n", idx)
+		m.mu.Unlock()
 		return
 	}
 
 	// Parse stats lines for aggregation, but only print per-instance stats in verbose mode
 	if strings.Contains(line, "[STATS]") {
-		m.parseStatsLine(stats, line)
+		changed = m.parseStatsLine(stats, line)
 		// Only show individual instance stats if verbose
 		if m.config.Verbosity >= 1 {
 			fmt.Printf("[instance-%d] %s\n", idx, line)
 		}
-		return
-	}
 
-	// All other output only shown in verbose mode
-	if m.config.Verbosity >= 1 {
-		fmt.Printf("[instance-%d] %s\n", idx, line)
+		m.mu.Unlock() // unlock before sending the signal to statsChanged
+
+		if changed {
+			select {
+			case m.statsChanged <- struct{}{}:
+			default:
+			}
+		}
+	} else {
+		// All other output only shown in verbose mode
+		if m.config.Verbosity >= 1 {
+			fmt.Printf("[instance-%d] %s\n", idx, line)
+		}
+
+		m.mu.Unlock()
 	}
 }
 
-func (m *MultiService) parseStatsLine(stats *InstanceStats, line string) {
+func (m *MultiService) parseStatsLine(stats *InstanceStats, line string) bool {
 	changed := false
 
 	if match := connectingRe.FindStringSubmatch(line); len(match) > 1 {
@@ -392,13 +406,7 @@ func (m *MultiService) parseStatsLine(stats *InstanceStats, line string) {
 		}
 	}
 
-	if changed {
-		select {
-		case m.statsChanged <- struct{}{}:
-		default:
-			// Channel full, skip this signal (next change will trigger anyway)
-		}
-	}
+	return changed
 }
 
 // parseByteValue converts a human-readable byte string to int64
