@@ -42,6 +42,9 @@ conduit start --psiphon-config ./psiphon_config.json -v
 
 # Debug output (everything)
 conduit start --psiphon-config ./psiphon_config.json -vv
+
+# Generate a QR code to link your node with the Ryve app (https://play.google.com/store/apps/details?id=network.ryve.app)
+conduit ryve-qr --name "My Custom Node"
 ```
 
 ### Options

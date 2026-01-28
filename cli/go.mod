@@ -3,10 +3,10 @@ module github.com/Psiphon-Inc/conduit/cli
 go 1.24.0
 
 require (
+	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/spf13/cobra v1.8.1
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/crypto v0.39.0
-	golang.org/x/term v0.32.0
 )
 
 require (
@@ -106,6 +106,7 @@ require (
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sync v0.15.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
+	golang.org/x/term v0.32.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.33.0 // indirect
@@ -113,6 +114,7 @@ require (
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	rsc.io/qr v0.2.0 // indirect
 	tailscale.com v1.58.2 // indirect
 )
 
