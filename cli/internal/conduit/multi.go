@@ -366,9 +366,9 @@ func (m *MultiService) printAndWriteStats() {
 		m.numInstances,
 		totalConnecting,
 		totalConnected,
-		FormatBytes(totalUp),
-		FormatBytes(totalDown),
-		FormatDuration(uptime),
+		formatBytes(totalUp),
+		formatBytes(totalDown),
+		formatDuration(uptime),
 	)
 
 	if m.config.StatsFile != "" {

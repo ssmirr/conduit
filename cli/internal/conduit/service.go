@@ -322,9 +322,9 @@ func (s *Service) logStats() {
 		time.Now().Format("2006-01-02 15:04:05"),
 		s.stats.ConnectingClients,
 		s.stats.ConnectedClients,
-		FormatBytes(s.stats.TotalBytesUp),
-		FormatBytes(s.stats.TotalBytesDown),
-		FormatDuration(uptime),
+		formatBytes(s.stats.TotalBytesUp),
+		formatBytes(s.stats.TotalBytesDown),
+		formatDuration(uptime),
 	)
 
 	// Write stats to file if configured (copy data while locked, write async)
@@ -359,8 +359,7 @@ func (s *Service) writeStatsToFile(statsJSON StatsJSON) {
 	}
 }
 
-// FormatDuration formats duration in a human-readable way
-func FormatDuration(d time.Duration) string {
+func formatDuration(d time.Duration) string {
 	h := d / time.Hour
 	m := (d % time.Hour) / time.Minute
 	s := (d % time.Minute) / time.Second
@@ -380,8 +379,7 @@ func (s *Service) GetStats() Stats {
 	return *s.stats
 }
 
-// FormatBytes formats bytes as a human-readable string
-func FormatBytes(bytes int64) string {
+func formatBytes(bytes int64) string {
 	const unit = 1024
 	if bytes < unit {
 		return fmt.Sprintf("%d B", bytes)
