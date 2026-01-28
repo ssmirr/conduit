@@ -214,12 +214,7 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 	}
 
 	// Pass through verbosity from parent to children
-	// Children need at least -v to output [STATS] lines for parsing
-	childVerbosity := m.config.Verbosity
-	if childVerbosity < 1 {
-		childVerbosity = 1 // Minimum -v required for stats output
-	}
-	for i := 0; i < childVerbosity; i++ {
+	for i := 0; i < m.config.Verbosity; i++ {
 		args = append(args, "-v")
 	}
 
