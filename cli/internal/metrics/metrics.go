@@ -79,6 +79,26 @@ func newGauge(gaugeOpts prometheus.GaugeOpts) prometheus.Gauge {
 	return ev
 }
 
+// build and register a new Prometheus vector gauge by accepting its options and labels.
+func newGaugeVec(gaugeOpts prometheus.GaugeOpts, labels []string) *prometheus.GaugeVec {
+	ev := prometheus.NewGaugeVec(gaugeOpts, labels)
+
+	err := prometheus.Register(ev)
+	if err != nil {
+		var are prometheus.AlreadyRegisteredError
+		if ok := errors.As(err, &are); ok {
+			ev, ok = are.ExistingCollector.(*prometheus.GaugeVec)
+			if !ok {
+				panic("different metric type registration")
+			}
+		} else {
+			panic(err)
+		}
+	}
+
+	return ev
+}
+
 // New creates a new Metrics instance with all metrics registered
 func New(gaugeFuncs GaugeFuncs) *Metrics {
 	registry := prometheus.NewRegistry()
@@ -88,56 +108,56 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	m := &Metrics{
-		ConnectingClients: prometheus.NewGauge(
+		ConnectingClients: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "connecting_clients",
 				Help:      "Number of clients currently connecting to the proxy",
 			},
 		),
-		ConnectedClients: prometheus.NewGauge(
+		ConnectedClients: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "connected_clients",
 				Help:      "Number of clients currently connected to the proxy",
 			},
 		),
-		IsLive: prometheus.NewGauge(
+		IsLive: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "is_live",
 				Help:      "Whether the service is connected to the Psiphon broker (1 = connected, 0 = disconnected)",
 			},
 		),
-		MaxClients: prometheus.NewGauge(
+		MaxClients: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "max_clients",
 				Help:      "Maximum number of proxy clients allowed",
 			},
 		),
-		BandwidthLimit: prometheus.NewGauge(
+		BandwidthLimit: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "bandwidth_limit_bytes_per_second",
 				Help:      "Configured bandwidth limit in bytes per second (0 = unlimited)",
 			},
 		),
-		BytesUploaded: prometheus.NewGauge(
+		BytesUploaded: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "bytes_uploaded",
 				Help:      "Total number of bytes uploaded through the proxy",
 			},
 		),
-		BytesDownloaded: prometheus.NewGauge(
+		BytesDownloaded: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "bytes_downloaded",
 				Help:      "Total number of bytes downloaded through the proxy",
 			},
 		),
-		BuildInfo: prometheus.NewGaugeVec(
+		BuildInfo: newGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "build_info",
@@ -167,16 +187,8 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 	)
 
 	// Register all metrics
-	registry.MustRegister(m.ConnectingClients)
-	registry.MustRegister(m.ConnectedClients)
-	registry.MustRegister(m.IsLive)
-	registry.MustRegister(m.MaxClients)
-	registry.MustRegister(m.BandwidthLimit)
 	registry.MustRegister(uptimeSeconds)
 	registry.MustRegister(idleSeconds)
-	registry.MustRegister(m.BytesUploaded)
-	registry.MustRegister(m.BytesDownloaded)
-	registry.MustRegister(m.BuildInfo)
 
 	// Set build info
 
