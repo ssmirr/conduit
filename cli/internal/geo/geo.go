@@ -23,6 +23,7 @@ package geo
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"sort"
 	"sync"
@@ -212,7 +213,9 @@ func (c *Collector) autoUpdate(ctx context.Context) {
 			}
 			c.mu.Lock()
 			if c.db != nil {
-				c.db.Close()
+				if err := c.db.Close(); err != nil {
+					log.Printf("failed to close geo database: %v", err)
+				}
 			}
 			db, err := geoip2.Open(c.dbPath)
 			if err == nil {
