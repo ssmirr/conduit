@@ -79,7 +79,7 @@ func newGauge(gaugeOpts prometheus.GaugeOpts) prometheus.Gauge {
 	return ev
 }
 
-// build and register a new Prometheus vector gauge by accepting its options and labels.
+// build and register a new Prometheus gauge vector by accepting its options and labels.
 func newGaugeVec(gaugeOpts prometheus.GaugeOpts, labels []string) *prometheus.GaugeVec {
 	ev := prometheus.NewGaugeVec(gaugeOpts, labels)
 
@@ -88,6 +88,26 @@ func newGaugeVec(gaugeOpts prometheus.GaugeOpts, labels []string) *prometheus.Ga
 		var are prometheus.AlreadyRegisteredError
 		if ok := errors.As(err, &are); ok {
 			ev, ok = are.ExistingCollector.(*prometheus.GaugeVec)
+			if !ok {
+				panic("different metric type registration")
+			}
+		} else {
+			panic(err)
+		}
+	}
+
+	return ev
+}
+
+// build and register a new Prometheus gauge function by accepting its options and function.
+func newGaugeFunc(gaugeOpts prometheus.GaugeOpts, function func() float64) prometheus.GaugeFunc {
+	ev := prometheus.NewGaugeFunc(gaugeOpts, function)
+
+	err := prometheus.Register(ev)
+	if err != nil {
+		var are prometheus.AlreadyRegisteredError
+		if ok := errors.As(err, &are); ok {
+			ev, ok = are.ExistingCollector.(prometheus.GaugeFunc)
 			if !ok {
 				panic("different metric type registration")
 			}
@@ -169,7 +189,7 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 	}
 
 	// Create GaugeFunc metrics (computed at scrape time)
-	uptimeSeconds := prometheus.NewGaugeFunc(
+	newGaugeFunc(
 		prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "uptime_seconds",
@@ -177,7 +197,7 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 		},
 		gaugeFuncs.GetUptimeSeconds,
 	)
-	idleSeconds := prometheus.NewGaugeFunc(
+	newGaugeFunc(
 		prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "idle_seconds",
@@ -186,12 +206,7 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 		gaugeFuncs.GetIdleSeconds,
 	)
 
-	// Register all metrics
-	registry.MustRegister(uptimeSeconds)
-	registry.MustRegister(idleSeconds)
-
 	// Set build info
-
 	buildInfo := buildinfo.GetBuildInfo()
 	m.BuildInfo.WithLabelValues(buildInfo.BuildRepo, buildInfo.BuildRev, buildInfo.GoVersion, buildInfo.ValuesRev).Set(1)
 
