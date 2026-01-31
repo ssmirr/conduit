@@ -31,6 +31,7 @@ import (
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/config"
 	"github.com/Psiphon-Inc/conduit/cli/internal/geo"
+	"github.com/Psiphon-Inc/conduit/cli/internal/metrics"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/inproxy"
 )
@@ -41,6 +42,7 @@ type Service struct {
 	controller   *psiphon.Controller
 	stats        *Stats
 	geoCollector *geo.Collector
+	metrics      *metrics.Metrics
 	mu           sync.RWMutex
 }
 
@@ -68,12 +70,19 @@ type StatsJSON struct {
 
 // New creates a new Conduit service
 func New(cfg *config.Config) (*Service, error) {
-	return &Service{
+	s := &Service{
 		config: cfg,
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
-	}, nil
+	}
+
+	if cfg.MetricsAddr != "" {
+		s.metrics = metrics.New()
+		s.metrics.SetConfig(cfg.MaxClients, cfg.BandwidthBytesPerSecond)
+	}
+
+	return s, nil
 }
 
 // Run starts the Conduit inproxy service and blocks until context is cancelled
@@ -89,18 +98,44 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}
 
+	if s.metrics != nil && s.config.MetricsAddr != "" {
+		if err := s.metrics.StartServer(s.config.MetricsAddr); err != nil {
+			return fmt.Errorf("failed to start metrics server: %w", err)
+		}
+
+		fmt.Printf("Prometheus metrics available at http://%s/metrics\n", s.config.MetricsAddr)
+
+		// Ensure metrics server is shut down when we're done
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := s.metrics.Shutdown(ctx); err != nil {
+				fmt.Printf("[ERROR] Failed to shutdown metrics server: %v\n", err)
+			}
+		}()
+	}
+
 	// Set up notice handling FIRST - before any psiphon calls
-	psiphon.SetNoticeWriter(psiphon.NewNoticeReceiver(
+	if err := psiphon.SetNoticeWriter(psiphon.NewNoticeReceiver(
 		func(notice []byte) {
 			s.handleNotice(notice)
 		},
-	))
+	)); err != nil {
+		return fmt.Errorf("failed to set notice writer: %w", err)
+	}
 
 	// Create Psiphon configuration
 	psiphonConfig, err := s.createPsiphonConfig()
 	if err != nil {
 		return fmt.Errorf("failed to create psiphon config: %w", err)
 	}
+
+	bandwidthStr := "unlimited"
+	if s.config.BandwidthBytesPerSecond > 0 {
+		bandwidthStr = fmt.Sprintf("%.0f Mbps", float64(s.config.BandwidthBytesPerSecond)*8/1000/1000)
+	}
+	fmt.Printf("Starting Psiphon Conduit (Max Clients: %d, Bandwidth: %s)\n", s.config.MaxClients, bandwidthStr)
 
 	// Open the data store
 	err = psiphon.OpenDataStore(&psiphon.Config{
@@ -220,6 +255,19 @@ func (s *Service) createPsiphonConfig() (*psiphon.Config, error) {
 	return psiphonConfig, nil
 }
 
+// updateMetrics updates the metrics from the stats
+func (s *Service) updateMetrics() {
+	if s.metrics == nil {
+		return
+	}
+
+	s.metrics.SetUptime(s.stats.StartTime)
+	s.metrics.SetConnectingClients(s.stats.ConnectingClients)
+	s.metrics.SetConnectedClients(s.stats.ConnectedClients)
+	s.metrics.SetBytesUploaded(float64(s.stats.TotalBytesUp))
+	s.metrics.SetBytesDownloaded(float64(s.stats.TotalBytesDown))
+}
+
 // handleNotice processes notices from psiphon-tunnel-core
 func (s *Service) handleNotice(notice []byte) {
 	var noticeData struct {
@@ -253,6 +301,9 @@ func (s *Service) handleNotice(notice []byte) {
 		if s.stats.ConnectingClients != prevConnecting || s.stats.ConnectedClients != prevConnected {
 			s.logStats()
 		}
+
+		s.updateMetrics()
+
 		s.mu.Unlock()
 
 	case "InproxyProxyTotalActivity":
@@ -276,6 +327,9 @@ func (s *Service) handleNotice(notice []byte) {
 		if s.stats.ConnectingClients != prevConnecting || s.stats.ConnectedClients != prevConnected {
 			s.logStats()
 		}
+
+		s.updateMetrics()
+
 		s.mu.Unlock()
 
 	case "Info":
@@ -285,6 +339,9 @@ func (s *Service) handleNotice(notice []byte) {
 				s.mu.Lock()
 				if !s.stats.IsLive {
 					s.stats.IsLive = true
+					if s.metrics != nil {
+						s.metrics.SetIsLive(true)
+					}
 					s.mu.Unlock()
 					fmt.Println("[OK] Connected to Psiphon network")
 				} else {
