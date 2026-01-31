@@ -22,6 +22,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -56,6 +57,26 @@ type Metrics struct {
 type GaugeFuncs struct {
 	GetUptimeSeconds func() float64
 	GetIdleSeconds   func() float64
+}
+
+// build and register a new Prometheus gauge by accepting its options.
+func newGauge(gaugeOpts prometheus.GaugeOpts) prometheus.Gauge {
+	ev := prometheus.NewGauge(gaugeOpts)
+
+	err := prometheus.Register(ev)
+	if err != nil {
+		var are prometheus.AlreadyRegisteredError
+		if ok := errors.As(err, &are); ok {
+			ev, ok = are.ExistingCollector.(prometheus.Gauge)
+			if !ok {
+				panic("different metric type registration")
+			}
+		} else {
+			panic(err)
+		}
+	}
+
+	return ev
 }
 
 // New creates a new Metrics instance with all metrics registered
