@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/Psiphon-Inc/conduit/cli/internal/geo"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -47,10 +48,10 @@ type Metrics struct {
 	BytesDownloaded   prometheus.Gauge
 
 	// Geo metrics (by country)
-	GeoConnectedClients   *prometheus.GaugeVec
-	GeoTotalClients       *prometheus.CounterVec
-	GeoBytesUploadedVec   *prometheus.CounterVec
-	GeoBytesDownloadedVec *prometheus.CounterVec
+	geoConnectedClients   *prometheus.GaugeVec
+	geoTotalClients       *prometheus.CounterVec
+	geoBytesUploadedVec   *prometheus.CounterVec
+	geoBytesDownloadedVec *prometheus.CounterVec
 
 	// Info
 	BuildInfo *prometheus.GaugeVec
@@ -60,7 +61,7 @@ type Metrics struct {
 
 	// State for counter delta tracking
 	geoMu       sync.Mutex
-	geoPrevious map[string]GeoResult // key: country_code
+	geoPrevious map[string]geo.Result // key: country_code
 }
 
 // GaugeFuncs holds functions that compute metrics at scrape time
@@ -127,39 +128,38 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 				Help:      "Total number of bytes downloaded through the proxy",
 			},
 		),
-		GeoConnectedClients: prometheus.NewGaugeVec(
+		geoConnectedClients: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
 				Name:      "geo_connected_clients",
 				Help:      "Number of currently connected clients by country",
 			},
-			[]string{"country_code", "country"},
+			[]string{"country_code"},
 		),
-		GeoTotalClients: prometheus.NewCounterVec(
+		geoTotalClients: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
-				Name:      "geo_total_clients",
+				Name:      "geo_clients_total",
 				Help:      "Total unique clients by country since start",
 			},
-			[]string{"country_code", "country"},
+			[]string{"country_code"},
 		),
-		GeoBytesUploadedVec: prometheus.NewCounterVec(
+		geoBytesUploadedVec: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Name:      "geo_bytes_uploaded_total",
 				Help:      "Total bytes uploaded by country",
 			},
-			[]string{"country_code", "country"},
+			[]string{"country_code"},
 		),
-		GeoBytesDownloadedVec: prometheus.NewCounterVec(
+		geoBytesDownloadedVec: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Name:      "geo_bytes_downloaded_total",
 				Help:      "Total bytes downloaded by country",
 			},
-			[]string{"country_code", "country"},
+			[]string{"country_code"},
 		),
-		geoPrevious: make(map[string]GeoResult),
 		BuildInfo: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
@@ -168,7 +168,10 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 			},
 			[]string{"build_repo", "build_rev", "go_version", "values_rev"},
 		),
-		registry: registry,
+
+		// Internal state
+		geoPrevious: make(map[string]geo.Result),
+		registry:    registry,
 	}
 
 	// Create GaugeFunc metrics (computed at scrape time)
@@ -192,10 +195,10 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 	// Register all metrics
 	registry.MustRegister(m.ConnectingClients)
 	registry.MustRegister(m.ConnectedClients)
-	registry.MustRegister(m.GeoConnectedClients)
-	registry.MustRegister(m.GeoTotalClients)
-	registry.MustRegister(m.GeoBytesUploadedVec)
-	registry.MustRegister(m.GeoBytesDownloadedVec)
+	registry.MustRegister(m.geoConnectedClients)
+	registry.MustRegister(m.geoTotalClients)
+	registry.MustRegister(m.geoBytesUploadedVec)
+	registry.MustRegister(m.geoBytesDownloadedVec)
 	registry.MustRegister(m.IsLive)
 	registry.MustRegister(m.MaxClients)
 	registry.MustRegister(m.BandwidthLimit)
@@ -248,32 +251,27 @@ func (m *Metrics) SetBytesDownloaded(bytes float64) {
 	m.BytesDownloaded.Set(bytes)
 }
 
-type GeoResult struct {
-	Code       string
-	Country    string
-	Count      int
-	CountTotal int
-	BytesUp    int64
-	BytesDown  int64
-}
-
-func (m *Metrics) UpdateGeo(results []GeoResult) {
+// UpdateGeo updates geo-based metrics from the latest geo collector results.
+// It computes deltas against previously seen values to correctly increment
+// Prometheus counters, and resets the connected clients gauge each cycle
+// so that countries with no active connections are removed.
+func (m *Metrics) UpdateGeo(results []geo.Result) {
 	m.geoMu.Lock()
 	defer m.geoMu.Unlock()
-	m.GeoConnectedClients.Reset()
+	m.geoConnectedClients.Reset()
 
 	for _, r := range results {
-		m.GeoConnectedClients.WithLabelValues(r.Code, r.Country).Set(float64(r.Count))
+		m.geoConnectedClients.WithLabelValues(r.Code).Set(float64(r.Count))
 		prev := m.geoPrevious[r.Code]
 
 		if delta := r.CountTotal - prev.CountTotal; delta > 0 {
-			m.GeoTotalClients.WithLabelValues(r.Code, r.Country).Add(float64(delta))
+			m.geoTotalClients.WithLabelValues(r.Code).Add(float64(delta))
 		}
 		if delta := r.BytesUp - prev.BytesUp; delta > 0 {
-			m.GeoBytesUploadedVec.WithLabelValues(r.Code, r.Country).Add(float64(delta))
+			m.geoBytesUploadedVec.WithLabelValues(r.Code).Add(float64(delta))
 		}
 		if delta := r.BytesDown - prev.BytesDown; delta > 0 {
-			m.GeoBytesDownloadedVec.WithLabelValues(r.Code, r.Country).Add(float64(delta))
+			m.geoBytesDownloadedVec.WithLabelValues(r.Code).Add(float64(delta))
 		}
 		m.geoPrevious[r.Code] = r
 	}

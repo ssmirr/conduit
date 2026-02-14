@@ -283,19 +283,7 @@ func (s *Service) updateMetrics() {
 
 	// Update geo metrics if geo tracking is enabled
 	if s.geoCollector != nil {
-		geoResults := s.geoCollector.GetResults()
-		metricsResults := make([]metrics.GeoResult, len(geoResults))
-		for i, r := range geoResults {
-			metricsResults[i] = metrics.GeoResult{
-				Code:       r.Code,
-				Country:    r.Country,
-				Count:      r.Count,
-				CountTotal: r.CountTotal,
-				BytesUp:    r.BytesUp,
-				BytesDown:  r.BytesDown,
-			}
-		}
-		s.metrics.UpdateGeo(metricsResults)
+		s.metrics.UpdateGeo(s.geoCollector.GetResults())
 	}
 }
 
