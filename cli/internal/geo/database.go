@@ -22,7 +22,6 @@ package geo
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,9 +73,7 @@ func UpdateDatabase(dbPath string) error {
 
 	// Replace old database with new one
 	if err := os.Rename(tmpPath, dbPath); err != nil {
-		if er := os.Remove(tmpPath); er != nil {
-			log.Printf("failed to remove tmp database: %v", er)
-		}
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to replace database: %w", err)
 	}
 
@@ -101,7 +98,7 @@ func downloadDatabase(destPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to download database: %w", err)
 	}
-	defer resp.Body.Close() // nolint: errcheck
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed with status: %d", resp.StatusCode)
@@ -112,14 +109,12 @@ func downloadDatabase(destPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer out.Close() // nolint: errcheck
+	defer func() { _ = out.Close() }()
 
 	// Copy with size limit
 	written, err := io.Copy(out, io.LimitReader(resp.Body, maxDownloadSize))
 	if err != nil {
-		if err := os.Remove(destPath); err != nil {
-			log.Printf("failed to remove written destination: %v", err)
-		}
+		_ = os.Remove(destPath)
 		return fmt.Errorf("failed to write database: %w", err)
 	}
 
