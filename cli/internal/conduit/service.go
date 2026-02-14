@@ -146,6 +146,9 @@ func (s *Service) Run(ctx context.Context) error {
 		bandwidthStr = fmt.Sprintf("%.0f Mbps", float64(s.config.BandwidthBytesPerSecond)*8/1000/1000)
 	}
 	fmt.Printf("Starting Psiphon Conduit (Max Clients: %d, Bandwidth: %s)\n", s.config.MaxClients, bandwidthStr)
+	if s.config.CompartmentID != "" {
+		fmt.Printf("Personal compartment: enabled\n")
+	}
 
 	// Open the data store
 	err = psiphon.OpenDataStore(&psiphon.Config{
@@ -211,6 +214,11 @@ func (s *Service) createPsiphonConfig() (*psiphon.Config, error) {
 		configJSON["InproxyLimitDownstreamBytesPerSecond"] = s.config.BandwidthBytesPerSecond
 	}
 	configJSON["InproxyProxySessionPrivateKey"] = s.config.PrivateKeyBase64
+
+	// Set personal compartment ID for private pairing
+	if s.config.CompartmentID != "" {
+		configJSON["InproxyProxyPersonalCompartmentID"] = s.config.CompartmentID
+	}
 
 	// Disable regular tunnel functionality - we're just a proxy
 	configJSON["DisableTunnels"] = true

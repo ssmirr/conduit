@@ -21,6 +21,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -55,6 +56,7 @@ type Options struct {
 	GeoEnabled        bool   // Enable geo tracking via tcpdump
 	MetricsAddr       string // Address for Prometheus metrics endpoint (empty = disabled)
 	IdleRestart       time.Duration
+	Compartment       string // Human-readable compartment name for private pairing
 }
 
 // Config represents the validated configuration for the Conduit service
@@ -63,6 +65,7 @@ type Config struct {
 	PrivateKeyBase64        string
 	MaxClients              int
 	BandwidthBytesPerSecond int
+	CompartmentID           string // Base64-encoded personal compartment ID for private pairing
 	DataDir                 string
 	PsiphonConfigPath       string
 	PsiphonConfigData       []byte // Embedded config data (if used)
@@ -172,11 +175,19 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		}
 	}
 
+	// Derive compartment ID from human-readable name using SHA-256
+	var compartmentID string
+	if opts.Compartment != "" {
+		hash := sha256.Sum256([]byte(opts.Compartment))
+		compartmentID = base64.RawStdEncoding.EncodeToString(hash[:])
+	}
+
 	return &Config{
 		KeyPair:                 keyPair,
 		PrivateKeyBase64:        privateKeyBase64,
 		MaxClients:              maxClients,
 		BandwidthBytesPerSecond: bandwidthBytesPerSecond,
+		CompartmentID:           compartmentID,
 		DataDir:                 opts.DataDir,
 		PsiphonConfigPath:       opts.PsiphonConfigPath,
 		PsiphonConfigData:       psiphonConfigData,
